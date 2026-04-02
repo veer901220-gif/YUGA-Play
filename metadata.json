@@ -1,0 +1,5 @@
+{
+  "name": "YUGA Play",
+  "description": "A powerful video player app with admin controls for video management and user authentication.",
+  "requestFramePermissions": []
+}

@@ -1,0 +1,118 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: videos
+    // Document ID: auto-generated
+    // Fields:
+    //   - title: string (required)
+    //   - description: string (optional)
+    //   - url: string (required, URL)
+    //   - thumbnailUrl: string (optional, URL)
+    //   - createdAt: number (required)
+    //   - authorId: string (required)
+    //   - authorName: string (optional)
+    //
+    // Collection: users
+    // Document ID: userId (UID)
+    // Fields:
+    //   - uid: string (required)
+    //   - email: string (required, email)
+    //   - displayName: string (optional)
+    //   - photoURL: string (optional)
+    //   - role: string (required, enum: ['admin', 'user'])
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isDefaultAdmin(email) {
+      return email == "karmveer901220@gmail.com";
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        ( (isDefaultAdmin(request.auth.token.email) && request.auth.token.email_verified == true) ||
+          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
+           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') );
+    }
+
+    function isValidVideo(data) {
+      return data.keys().hasAll(['title', 'url', 'createdAt', 'authorId']) &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
+             data.url is string && (data.url.matches("^https://.*") || data.url.matches("^http://.*")) &&
+             data.createdAt is number &&
+             data.authorId == request.auth.uid;
+    }
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'role']) &&
+             data.uid == request.auth.uid &&
+             data.email is string && data.email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$") &&
+             data.role in ['admin', 'user'] &&
+             (!('isOnline' in data) || data.isOnline is bool) &&
+             (!('lastActive' in data) || data.lastActive is number) &&
+             (!('sessionStart' in data) || data.sessionStart is number);
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data) && 
+                    (request.resource.data.role == 'user' || (request.resource.data.role == 'admin' && isDefaultAdmin(request.auth.token.email)));
+      allow update: if isAdmin() || (isOwner(userId) && request.resource.data.role == resource.data.role && isValidUser(request.resource.data));
+      allow delete: if isAdmin();
+
+      match /mylist/{videoId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      match /savedPlaylists/{playlistId} {
+        allow read, write: if isOwner(userId);
+      }
+
+      match /history/{videoId} {
+        allow read, write: if isOwner(userId);
+      }
+    }
+
+    function isValidPlaylist(data) {
+      return data.keys().hasAll(['title', 'videoIds', 'createdAt', 'authorId']) &&
+             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
+             data.videoIds is list && data.videoIds.size() <= 100 &&
+             data.createdAt is number &&
+             data.authorId == request.auth.uid &&
+             (!('thumbnailUrl' in data) || (data.thumbnailUrl is string && (data.thumbnailUrl.matches("^https://.*") || data.thumbnailUrl.matches("^http://.*")))) &&
+             (!('description' in data) || (data.description is string && data.description.size() < 1000));
+    }
+
+    match /videos/{videoId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin() && isValidVideo(request.resource.data);
+      allow delete: if isAdmin();
+      allow update: if isAdmin() && isValidVideo(request.resource.data);
+    }
+
+    match /playlists/{playlistId} {
+      allow read: if isAuthenticated();
+      allow create: if isAdmin() && isValidPlaylist(request.resource.data);
+      allow delete: if isAdmin();
+      allow update: if isAdmin() && isValidPlaylist(request.resource.data);
+    }
+  }
+}
