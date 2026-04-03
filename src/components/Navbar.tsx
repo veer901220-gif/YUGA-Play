@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { auth, googleProvider, db, handleFirestoreError, OperationType } from '../firebase';
-import { signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
+import { signInWithPopup, signInWithRedirect, signOut, onAuthStateChanged, User, getRedirectResult } from 'firebase/auth';
 import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
-import { LogIn, LogOut, Shield, User as UserIcon, Search, Info, X } from 'lucide-react';
+import { LogIn, LogOut, Shield, User as UserIcon, Search, Info, X, AlertCircle } from 'lucide-react';
 import { cn } from '../lib/utils';
 import { AppSettings } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
@@ -10,6 +10,7 @@ import { motion, AnimatePresence } from 'motion/react';
 export default function Navbar({ onOpenDashboard }: { onOpenDashboard: () => void }) {
   const [user, setUser] = useState<User | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
   const [appSettings, setAppSettings] = useState<AppSettings>({
     appName: 'YUGA Play',
     appLogo: '',
@@ -19,6 +20,12 @@ export default function Navbar({ onOpenDashboard }: { onOpenDashboard: () => voi
   });
 
   useEffect(() => {
+    // Check for redirect result on mount
+    getRedirectResult(auth).catch((error) => {
+      console.error("Redirect login error:", error);
+      setLoginError("Login failed. Please check your internet or Firebase settings.");
+    });
+
     const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       if (currentUser) {
@@ -65,11 +72,40 @@ export default function Navbar({ onOpenDashboard }: { onOpenDashboard: () => voi
   const handleLogin = async () => {
     if (isLoggingIn) return;
     setIsLoggingIn(true);
+    setLoginError(null);
+    
+    // Check if we are on mobile or in a standalone app (like APK)
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    const isStandalone = (window.navigator as any).standalone || window.matchMedia('(display-mode: standalone)').matches;
+
     try {
-      await signInWithPopup(auth, googleProvider);
+      if (isMobile || isStandalone) {
+        // Redirect is better for mobile/APK
+        await signInWithRedirect(auth, googleProvider);
+      } else {
+        try {
+          await signInWithPopup(auth, googleProvider);
+        } catch (popupError: any) {
+          // If popup is blocked, try redirect
+          if (popupError.code === 'auth/popup-blocked') {
+            await signInWithRedirect(auth, googleProvider);
+          } else {
+            throw popupError;
+          }
+        }
+      }
     } catch (error: any) {
       if (error.code !== 'auth/cancelled-popup-request' && error.code !== 'auth/popup-closed-by-user') {
         console.error("Login failed:", error);
+        let msg = "Login failed. ";
+        if (error.code === 'auth/unauthorized-domain') {
+          msg += "This domain is not authorized in Firebase Console.";
+        } else if (error.code === 'auth/network-request-failed') {
+          msg += "Network error. Check your internet or SHA-1 fingerprint.";
+        } else {
+          msg += error.message || "Check your Firebase settings.";
+        }
+        setLoginError(msg);
       }
     } finally {
       setIsLoggingIn(false);
@@ -107,6 +143,15 @@ export default function Navbar({ onOpenDashboard }: { onOpenDashboard: () => voi
       </div>
 
       <div className="flex items-center gap-2 sm:gap-4">
+        {loginError && (
+          <div className="hidden lg:flex items-center gap-2 px-3 py-1.5 bg-red-500/10 border border-red-500/20 rounded-full text-red-500 text-[10px] font-medium animate-pulse">
+            <AlertCircle className="w-3 h-3" />
+            {loginError}
+            <button onClick={() => setLoginError(null)} className="ml-1 hover:text-white">
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+        )}
         {user ? (
           <div className="flex items-center gap-2 sm:gap-4">
             {isAdmin && (
