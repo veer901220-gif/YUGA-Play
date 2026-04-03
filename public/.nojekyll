@@ -1,0 +1,2 @@
+# GitHub Pages Deployment
+This file is required to tell GitHub Pages NOT to use Jekyll, which can break Vite's asset folders.
