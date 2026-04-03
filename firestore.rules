@@ -59,7 +59,7 @@ service cloud.firestore {
 
     function isValidUser(data) {
       return data.keys().hasAll(['uid', 'email', 'role']) &&
-             data.uid == request.auth.uid &&
+             data.uid is string &&
              data.email is string && data.email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$") &&
              data.role in ['admin', 'user'] &&
              (!('isOnline' in data) || data.isOnline is bool) &&
@@ -67,16 +67,29 @@ service cloud.firestore {
              (!('sessionStart' in data) || data.sessionStart is number);
     }
 
+    function isValidSettings(data) {
+      return data.keys().hasAll(['appName', 'appLogo', 'appDetails']) &&
+             data.appName is string && data.appName.size() > 0 && data.appName.size() < 100 &&
+             data.appLogo is string && (data.appLogo == "" || data.appLogo.matches("^https://.*") || data.appLogo.matches("^http://.*")) &&
+             data.appDetails is string && data.appDetails.size() < 5000;
+    }
+
     // ===============================================================
     // Rules
     // ===============================================================
+
+    match /settings/global {
+      allow read: if isAuthenticated();
+      allow write: if isAdmin() && isValidSettings(request.resource.data);
+    }
 
     match /users/{userId} {
       allow read: if isAuthenticated();
       allow create: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data) && 
                     (request.resource.data.role == 'user' || (request.resource.data.role == 'admin' && isDefaultAdmin(request.auth.token.email)));
-      allow update: if isAdmin() || (isOwner(userId) && request.resource.data.role == resource.data.role && isValidUser(request.resource.data));
-      allow delete: if isAdmin();
+      allow update: if (isAdmin() && !isDefaultAdmin(resource.data.email)) || 
+                    (isOwner(userId) && request.resource.data.role == resource.data.role && isValidUser(request.resource.data));
+      allow delete: if isAdmin() && !isDefaultAdmin(resource.data.email);
 
       match /mylist/{videoId} {
         allow read, write: if isOwner(userId);

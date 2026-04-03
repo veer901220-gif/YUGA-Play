@@ -44,9 +44,26 @@
         "authorId": { "type": "string", "description": "UID of the user who created the playlist." }
       },
       "required": ["title", "videoIds", "createdAt", "authorId"]
+    },
+    "AppSettings": {
+      "title": "AppSettings",
+      "description": "Global application settings like name, logo, and details.",
+      "type": "object",
+      "properties": {
+        "appName": { "type": "string", "description": "The name of the application." },
+        "appLogo": { "type": "string", "description": "The URL to the application's logo." },
+        "appDetails": { "type": "string", "description": "The details/description of the application." },
+        "updatedAt": { "type": "number", "description": "Timestamp of the last update." },
+        "updatedBy": { "type": "string", "description": "UID of the admin who last updated the settings." }
+      },
+      "required": ["appName", "appLogo", "appDetails"]
     }
   },
   "firestore": {
+    "/settings/global": {
+      "schema": "AppSettings",
+      "description": "Global application settings."
+    },
     "/videos/{videoId}": {
       "schema": "Video",
       "description": "Collection of videos available on the platform."

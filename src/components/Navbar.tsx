@@ -1,16 +1,25 @@
 import { useState, useEffect } from 'react';
 import { auth, googleProvider, db, handleFirestoreError, OperationType } from '../firebase';
 import { signInWithPopup, signOut, onAuthStateChanged, User } from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { LogIn, LogOut, Shield, User as UserIcon, Search } from 'lucide-react';
+import { doc, getDoc, setDoc, onSnapshot } from 'firebase/firestore';
+import { LogIn, LogOut, Shield, User as UserIcon, Search, Info, X } from 'lucide-react';
 import { cn } from '../lib/utils';
+import { AppSettings } from '../types';
+import { motion, AnimatePresence } from 'motion/react';
 
 export default function Navbar({ onOpenDashboard }: { onOpenDashboard: () => void }) {
   const [user, setUser] = useState<User | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [appSettings, setAppSettings] = useState<AppSettings>({
+    appName: 'YUGA Play',
+    appLogo: '',
+    appDetails: 'This app created by Veer',
+    updatedAt: Date.now(),
+    updatedBy: ''
+  });
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
       if (currentUser) {
         try {
@@ -18,7 +27,6 @@ export default function Navbar({ onOpenDashboard }: { onOpenDashboard: () => voi
           if (userDoc.exists()) {
             setIsAdmin(userDoc.data().role === 'admin');
           } else {
-            // Default admin check for the specified email
             const isDefaultAdmin = currentUser.email === 'karmveer901220@gmail.com';
             setIsAdmin(isDefaultAdmin);
             await setDoc(doc(db, 'users', currentUser.uid), {
@@ -36,12 +44,23 @@ export default function Navbar({ onOpenDashboard }: { onOpenDashboard: () => voi
         setIsAdmin(false);
       }
     });
-    return () => unsubscribe();
+
+    const unsubscribeSettings = onSnapshot(doc(db, 'settings', 'global'), (doc) => {
+      if (doc.exists()) {
+        setAppSettings(doc.data() as AppSettings);
+      }
+    });
+
+    return () => {
+      unsubscribeAuth();
+      unsubscribeSettings();
+    };
   }, []);
 
   const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
+  const [showAppDetails, setShowAppDetails] = useState(false);
 
   const handleLogin = async () => {
     if (isLoggingIn) return;
@@ -70,11 +89,20 @@ export default function Navbar({ onOpenDashboard }: { onOpenDashboard: () => voi
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 bg-black/80 backdrop-blur-md border-b border-white/10 px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between">
       <div className="flex items-center gap-2">
-        <div className="w-8 h-8 sm:w-10 sm:h-10 bg-orange-600 rounded-lg sm:rounded-xl flex items-center justify-center font-bold text-lg sm:text-xl text-white shadow-lg shadow-orange-600/20">
-          Y
-        </div>
+        {appSettings.appLogo ? (
+          <img 
+            src={appSettings.appLogo} 
+            alt={appSettings.appName} 
+            className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl object-cover border border-white/10"
+            referrerPolicy="no-referrer"
+          />
+        ) : (
+          <div className="w-8 h-8 sm:w-10 sm:h-10 bg-orange-600 rounded-lg sm:rounded-xl flex items-center justify-center font-bold text-lg sm:text-xl text-white shadow-lg shadow-orange-600/20">
+            {appSettings.appName.charAt(0)}
+          </div>
+        )}
         <h1 className="text-xl sm:text-2xl font-black tracking-tighter text-white">
-          YUGA<span className="text-orange-600">Play</span>
+          {appSettings.appName}
         </h1>
       </div>
 
@@ -107,29 +135,48 @@ export default function Navbar({ onOpenDashboard }: { onOpenDashboard: () => voi
                 </div>
               </button>
 
-              {showUserMenu && (
-                <div className="absolute right-0 mt-2 w-56 bg-[#1a1a1a] border border-white/10 rounded-2xl shadow-2xl overflow-hidden z-50">
-                  <div className="px-4 py-4 border-b border-white/5 bg-white/5 flex items-center gap-3">
-                    <img 
-                      src={user.photoURL || ''} 
-                      alt={user.displayName || ''} 
-                      className="w-10 h-10 rounded-full border border-white/10"
-                      referrerPolicy="no-referrer"
-                    />
-                    <div className="overflow-hidden">
-                      <p className="text-sm font-bold text-white truncate">{user.displayName}</p>
-                      <p className="text-[10px] text-white/40 truncate">{user.email}</p>
-                    </div>
-                  </div>
-                  <button 
-                    onClick={() => setShowLogoutConfirm(true)}
-                    className="w-full flex items-center gap-3 px-4 py-4 text-sm font-bold text-red-500 hover:bg-red-500/10 transition-colors"
+              <AnimatePresence>
+                {showUserMenu && (
+                  <motion.div 
+                    initial={{ opacity: 0, scale: 0.95, y: 10 }}
+                    animate={{ opacity: 1, scale: 1, y: 0 }}
+                    exit={{ opacity: 0, scale: 0.95, y: 10 }}
+                    className="absolute right-0 mt-2 w-56 bg-[#1a1a1a] border border-white/10 rounded-2xl shadow-2xl overflow-hidden z-50"
                   >
-                    <LogOut className="w-4 h-4" />
-                    Logout
-                  </button>
-                </div>
-              )}
+                    <div className="px-4 py-4 border-b border-white/5 bg-white/5 flex items-center gap-3">
+                      <img 
+                        src={user.photoURL || ''} 
+                        alt={user.displayName || ''} 
+                        className="w-10 h-10 rounded-full border border-white/10"
+                        referrerPolicy="no-referrer"
+                      />
+                      <div className="overflow-hidden">
+                        <p className="text-sm font-bold text-white truncate">{user.displayName}</p>
+                        <p className="text-[10px] text-white/40 truncate">{user.email}</p>
+                      </div>
+                    </div>
+                    
+                    <button 
+                      onClick={() => {
+                        setShowAppDetails(true);
+                        setShowUserMenu(false);
+                      }}
+                      className="w-full flex items-center gap-3 px-4 py-4 text-sm font-bold text-white/60 hover:bg-white/5 hover:text-white transition-colors border-b border-white/5"
+                    >
+                      <Info className="w-4 h-4" />
+                      App Details
+                    </button>
+
+                    <button 
+                      onClick={() => setShowLogoutConfirm(true)}
+                      className="w-full flex items-center gap-3 px-4 py-4 text-sm font-bold text-red-500 hover:bg-red-500/10 transition-colors"
+                    >
+                      <LogOut className="w-4 h-4" />
+                      Logout
+                    </button>
+                  </motion.div>
+                )}
+              </AnimatePresence>
             </div>
           </div>
         ) : (
@@ -148,14 +195,58 @@ export default function Navbar({ onOpenDashboard }: { onOpenDashboard: () => voi
         )}
       </div>
 
+      {/* App Details Popup */}
+      <AnimatePresence>
+        {showAppDetails && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/80 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="w-full max-w-md bg-[#121212] border border-white/10 rounded-3xl p-8 shadow-2xl relative overflow-hidden"
+            >
+              <div className="absolute top-0 right-0 w-32 h-32 bg-orange-600/10 blur-3xl rounded-full -mr-16 -mt-16" />
+              
+              <div className="flex items-center gap-4 mb-8">
+                <div className="w-12 h-12 bg-orange-600 rounded-2xl flex items-center justify-center font-black text-2xl text-white">
+                  {appSettings.appName.charAt(0)}
+                </div>
+                <div>
+                  <h3 className="text-2xl font-black text-white tracking-tight">{appSettings.appName}</h3>
+                  <p className="text-white/40 text-xs uppercase tracking-widest font-bold">Application Details</p>
+                </div>
+              </div>
+
+              <div className="bg-white/5 rounded-2xl p-6 mb-8 border border-white/5">
+                <p className="text-white/80 text-sm leading-relaxed whitespace-pre-wrap">
+                  {appSettings.appDetails}
+                </p>
+              </div>
+
+              <button 
+                onClick={() => setShowAppDetails(false)}
+                className="w-full py-4 bg-white text-black font-black rounded-2xl hover:bg-orange-600 hover:text-white transition-all active:scale-95 flex items-center justify-center gap-2"
+              >
+                <X className="w-5 h-5" />
+                CLOSE
+              </button>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
       {/* Logout Confirmation Popup */}
       {showLogoutConfirm && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/80 backdrop-blur-sm">
-          <div className="w-full max-w-sm bg-[#121212] border border-white/10 rounded-3xl p-8 shadow-2xl text-center">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.9, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            className="w-full max-w-sm bg-[#121212] border border-white/10 rounded-3xl p-8 shadow-2xl text-center"
+          >
             <div className="relative w-20 h-20 mx-auto mb-6">
               <img 
-                src={user.photoURL || ''} 
-                alt={user.displayName || ''} 
+                src={user?.photoURL || ''} 
+                alt={user?.displayName || ''} 
                 className="w-full h-full rounded-2xl border-2 border-white/10 object-cover"
                 referrerPolicy="no-referrer"
               />
@@ -164,7 +255,7 @@ export default function Navbar({ onOpenDashboard }: { onOpenDashboard: () => voi
               </div>
             </div>
             <h3 className="text-xl font-black text-white mb-2">Please Confirm to Logout</h3>
-            <p className="text-white/40 text-sm mb-8">Are you sure you want to sign out, <span className="text-white font-bold">{user.displayName}</span>?</p>
+            <p className="text-white/40 text-sm mb-8">Are you sure you want to sign out, <span className="text-white font-bold">{user?.displayName}</span>?</p>
             <div className="grid grid-cols-2 gap-4">
               <button 
                 onClick={() => setShowLogoutConfirm(false)}
@@ -179,7 +270,7 @@ export default function Navbar({ onOpenDashboard }: { onOpenDashboard: () => voi
                 Yes
               </button>
             </div>
-          </div>
+          </motion.div>
         </div>
       )}
     </nav>

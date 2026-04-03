@@ -1,8 +1,10 @@
 import ReactPlayer from 'react-player';
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { X } from 'lucide-react';
-import { Video } from '../types';
+import { Video, AppSettings } from '../types';
 import { motion } from 'motion/react';
+import { db } from '../firebase';
+import { doc, onSnapshot } from 'firebase/firestore';
 
 interface VideoPlayerProps {
   video: Video;
@@ -13,8 +15,24 @@ interface VideoPlayerProps {
 
 export default function VideoPlayer({ video, onClose, initialTime = 0, onProgress }: VideoPlayerProps) {
   const [playing, setPlaying] = useState(false);
+  const [appSettings, setAppSettings] = useState<AppSettings>({
+    appName: 'YUGA Play',
+    appLogo: '',
+    appDetails: 'This app created by Veer',
+    updatedAt: Date.now(),
+    updatedBy: ''
+  });
   const playerRef = useRef<any>(null);
   const Player = ReactPlayer as any;
+
+  useEffect(() => {
+    const unsubscribeSettings = onSnapshot(doc(db, 'settings', 'global'), (doc) => {
+      if (doc.exists()) {
+        setAppSettings(doc.data() as AppSettings);
+      }
+    });
+    return () => unsubscribeSettings();
+  }, []);
 
   const isDriveLink = video.url.includes('drive.google.com') || video.url.includes('docs.google.com');
   const driveId = isDriveLink ? video.url.match(/[a-zA-Z0-9_-]{25,}/)?.[0] : null;
@@ -36,9 +54,18 @@ export default function VideoPlayer({ video, onClose, initialTime = 0, onProgres
     >
       <div className="absolute top-0 left-0 right-0 p-4 sm:p-6 flex items-center justify-between z-10 bg-gradient-to-b from-black/80 to-transparent">
         <div className="flex items-center gap-3 sm:gap-4">
-          <div className="w-8 h-8 sm:w-10 sm:h-10 bg-orange-600 rounded-lg sm:rounded-xl flex items-center justify-center font-bold text-lg sm:text-xl text-white">
-            Y
-          </div>
+          {appSettings.appLogo ? (
+            <img 
+              src={appSettings.appLogo} 
+              alt={appSettings.appName} 
+              className="w-8 h-8 sm:w-10 sm:h-10 rounded-lg sm:rounded-xl object-cover border border-white/10"
+              referrerPolicy="no-referrer"
+            />
+          ) : (
+            <div className="w-8 h-8 sm:w-10 sm:h-10 bg-orange-600 rounded-lg sm:rounded-xl flex items-center justify-center font-bold text-lg sm:text-xl text-white">
+              {appSettings.appName.charAt(0)}
+            </div>
+          )}
           <div className="overflow-hidden">
             <h2 className="text-base sm:text-xl font-black text-white tracking-tight truncate max-w-[150px] sm:max-w-md">{video.title}</h2>
             <p className="text-white/40 text-[10px] sm:text-xs uppercase tracking-widest">Playing Now</p>

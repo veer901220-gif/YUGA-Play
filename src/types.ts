@@ -32,3 +32,11 @@ export interface Playlist {
   authorId: string;
   thumbnailUrl?: string;
 }
+
+export interface AppSettings {
+  appName: string;
+  appLogo: string;
+  appDetails: string;
+  updatedAt: number;
+  updatedBy: string;
+}

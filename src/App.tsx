@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { auth, db, handleFirestoreError, OperationType } from './firebase';
 import { onAuthStateChanged } from 'firebase/auth';
 import { collection, query, orderBy, onSnapshot, doc, getDoc, Unsubscribe, deleteDoc, writeBatch, updateDoc, limit } from 'firebase/firestore';
-import { Video, Playlist } from './types';
+import { Video, Playlist, AppSettings } from './types';
 import Navbar from './components/Navbar';
 import VideoCard from './components/VideoCard';
 import AdminUpload from './components/AdminUpload';
@@ -151,6 +151,13 @@ export default function App() {
   const [openMenuPlaylistId, setOpenMenuPlaylistId] = useState<string | null>(null);
   const [savedPlaylistIds, setSavedPlaylistIds] = useState<string[]>([]);
   const [history, setHistory] = useState<Video[]>([]);
+  const [appSettings, setAppSettings] = useState<AppSettings>({
+    appName: 'YUGA Play',
+    appLogo: '',
+    appDetails: 'This app created by Veer',
+    updatedAt: Date.now(),
+    updatedBy: ''
+  });
   
   // Presence Heartbeat
   useEffect(() => {
@@ -320,10 +327,17 @@ export default function App() {
       handleFirestoreError(error, OperationType.GET, 'history');
     });
 
+    const unsubscribeSettings = onSnapshot(doc(db, 'settings', 'global'), (doc) => {
+      if (doc.exists()) {
+        setAppSettings(doc.data() as AppSettings);
+      }
+    });
+
     return () => {
       unsubscribe();
       unsubscribeSavedPlaylists();
       unsubscribeHistory();
+      unsubscribeSettings();
     };
   }, [user, videos]);
 
@@ -394,11 +408,15 @@ export default function App() {
             <motion.div 
               initial={{ scale: 0.8, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
-              className="w-24 h-24 bg-orange-600 rounded-[2rem] flex items-center justify-center mb-8 shadow-2xl shadow-orange-600/20"
+              className="w-24 h-24 bg-orange-600 rounded-[2rem] flex items-center justify-center mb-8 shadow-2xl shadow-orange-600/20 overflow-hidden"
             >
-              <Play className="w-10 h-10 text-white fill-white ml-1" />
+              {appSettings.appLogo ? (
+                <img src={appSettings.appLogo} alt={appSettings.appName} className="w-full h-full object-cover" referrerPolicy="no-referrer" />
+              ) : (
+                <Play className="w-10 h-10 text-white fill-white ml-1" />
+              )}
             </motion.div>
-            <h2 className="text-3xl sm:text-4xl lg:text-5xl font-black tracking-tighter mb-4">Welcome to YUGA Play</h2>
+            <h2 className="text-3xl sm:text-4xl lg:text-5xl font-black tracking-tighter mb-4">Welcome to {appSettings.appName}</h2>
             <p className="text-white/40 text-base sm:text-lg max-w-md mb-8">
               Login with your Google account to access our premium video library and start watching.
             </p>
@@ -780,14 +798,18 @@ export default function App() {
       <footer className="border-t border-white/5 py-12 px-6">
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-8">
           <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-orange-600 rounded-lg flex items-center justify-center font-bold text-lg text-white">
-              Y
-            </div>
+            {appSettings.appLogo ? (
+              <img src={appSettings.appLogo} alt={appSettings.appName} className="w-8 h-8 rounded-lg object-cover" referrerPolicy="no-referrer" />
+            ) : (
+              <div className="w-8 h-8 bg-orange-600 rounded-lg flex items-center justify-center font-bold text-lg text-white">
+                {appSettings.appName.charAt(0)}
+              </div>
+            )}
             <h1 className="text-xl font-black tracking-tighter text-white">
-              YUGA<span className="text-orange-600">Play</span>
+              {appSettings.appName}
             </h1>
           </div>
-          <p className="text-white/20 text-sm font-medium uppercase tracking-widest">© 2026 YUGA Play. All rights reserved.</p>
+          <p className="text-white/20 text-sm font-medium uppercase tracking-widest">© 2026 {appSettings.appName}. All rights reserved.</p>
           <div className="flex items-center gap-6 text-white/40 text-xs font-bold uppercase tracking-widest">
             <a href="#" className="hover:text-orange-600 transition-colors">Privacy</a>
             <a href="#" className="hover:text-orange-600 transition-colors">Terms</a>
