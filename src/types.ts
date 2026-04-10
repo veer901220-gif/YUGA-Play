@@ -21,6 +21,10 @@ export interface UserProfile {
   isOnline?: boolean;
   lastActive?: number;
   sessionStart?: number;
+  createdAt?: number;
+  myList?: string[];
+  history?: Video[];
+  savedPlaylists?: string[];
 }
 
 export interface Playlist {

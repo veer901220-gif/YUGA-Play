@@ -1,7 +1,7 @@
 import { useState } from 'react';
-import { db, auth, handleFirestoreError, OperationType } from '../firebase';
-import { collection, addDoc } from 'firebase/firestore';
-import { Plus, X, Upload, Film, Link as LinkIcon, Type, FileText, Image as ImageIcon } from 'lucide-react';
+import { api } from '../api';
+import { useAuth } from '../context/AuthContext';
+import { X, Upload, Link as LinkIcon, Type, FileText, Image as ImageIcon } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { resolveLink } from '../lib/utils';
 
@@ -11,6 +11,7 @@ interface AdminUploadProps {
 }
 
 export default function AdminUpload({ isOpen, onClose }: AdminUploadProps) {
+  const { user } = useAuth();
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
     title: '',
@@ -21,26 +22,28 @@ export default function AdminUpload({ isOpen, onClose }: AdminUploadProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!auth.currentUser) return;
+    if (!user) return;
 
     setLoading(true);
     try {
       const processedUrl = await resolveLink(formData.url, 'video');
       const processedThumbnailUrl = await resolveLink(formData.thumbnailUrl, 'thumbnail');
 
-      await addDoc(collection(db, 'videos'), {
+      await api.addVideo({
         ...formData,
         url: processedUrl,
         thumbnailUrl: processedThumbnailUrl,
         createdAt: Date.now(),
-        authorId: auth.currentUser.uid,
-        authorName: auth.currentUser.displayName || 'Admin',
-        authorPhotoURL: auth.currentUser.photoURL || ''
+        authorId: user.uid,
+        authorName: user.displayName,
+        authorPhotoURL: user.photoURL || ''
       });
+      window.dispatchEvent(new CustomEvent('video-updated'));
       setFormData({ title: '', description: '', url: '', thumbnailUrl: '' });
       onClose();
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'videos');
+      console.error('Error uploading video:', error);
+      alert('Failed to upload video');
     } finally {
       setLoading(false);
     }

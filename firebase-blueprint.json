@@ -1,92 +1,84 @@
 {
   "entities": {
-    "Video": {
-      "title": "Video",
-      "description": "Information about a video uploaded to the platform.",
-      "type": "object",
-      "properties": {
-        "title": { "type": "string", "description": "The title of the video." },
-        "description": { "type": "string", "description": "A short description of the video." },
-        "url": { "type": "string", "description": "The URL to the video file." },
-        "thumbnailUrl": { "type": "string", "description": "The URL to the video's thumbnail image." },
-        "createdAt": { "type": "number", "description": "Timestamp of when the video was uploaded." },
-        "authorId": { "type": "string", "description": "UID of the user who uploaded the video." },
-        "authorName": { "type": "string", "description": "Display name of the user who uploaded the video." }
-      },
-      "required": ["title", "url", "createdAt", "authorId"]
-    },
     "UserProfile": {
       "title": "UserProfile",
-      "description": "User profile information and roles.",
+      "description": "User profile information",
       "type": "object",
       "properties": {
-        "uid": { "type": "string", "description": "The unique identifier for the user." },
-        "email": { "type": "string", "description": "The user's email address." },
-        "displayName": { "type": "string", "description": "The user's display name." },
-        "photoURL": { "type": "string", "description": "The user's profile photo URL." },
-        "role": { "type": "string", "enum": ["admin", "user"], "description": "The user's role (admin or user)." },
-        "isOnline": { "type": "boolean", "description": "Whether the user is currently online." },
-        "lastActive": { "type": "number", "description": "Timestamp of the user's last activity." },
-        "sessionStart": { "type": "number", "description": "Timestamp of when the user's current session started." }
+        "uid": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "displayName": { "type": "string" },
+        "photoURL": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "user"] },
+        "isOnline": { "type": "boolean" },
+        "lastActive": { "type": "number" },
+        "sessionStart": { "type": "number" },
+        "createdAt": { "type": "number" }
       },
-      "required": ["uid", "email", "role"]
+      "required": ["uid", "email", "displayName", "role"]
+    },
+    "Video": {
+      "title": "Video",
+      "description": "Video information",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "url": { "type": "string" },
+        "thumbnailUrl": { "type": "string" },
+        "createdAt": { "type": "number" },
+        "authorId": { "type": "string" },
+        "authorName": { "type": "string" },
+        "authorPhotoURL": { "type": "string" }
+      },
+      "required": ["id", "title", "url", "createdAt", "authorId"]
     },
     "Playlist": {
       "title": "Playlist",
-      "description": "A collection of videos curated by a user.",
+      "description": "Video playlist",
       "type": "object",
       "properties": {
-        "title": { "type": "string", "description": "The title of the playlist." },
-        "description": { "type": "string", "description": "A short description of the playlist." },
-        "thumbnailUrl": { "type": "string", "description": "The URL to the playlist's thumbnail image." },
-        "videoIds": { "type": "array", "items": { "type": "string" }, "description": "List of video IDs in the playlist." },
-        "createdAt": { "type": "number", "description": "Timestamp of when the playlist was created." },
-        "authorId": { "type": "string", "description": "UID of the user who created the playlist." }
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "thumbnailUrl": { "type": "string" },
+        "videoIds": { "type": "array", "items": { "type": "string" } },
+        "createdAt": { "type": "number" },
+        "authorId": { "type": "string" }
       },
-      "required": ["title", "videoIds", "createdAt", "authorId"]
+      "required": ["id", "title", "videoIds", "createdAt", "authorId"]
     },
     "AppSettings": {
       "title": "AppSettings",
-      "description": "Global application settings like name, logo, and details.",
+      "description": "Application settings",
       "type": "object",
       "properties": {
-        "appName": { "type": "string", "description": "The name of the application." },
-        "appLogo": { "type": "string", "description": "The URL to the application's logo." },
-        "appDetails": { "type": "string", "description": "The details/description of the application." },
-        "updatedAt": { "type": "number", "description": "Timestamp of the last update." },
-        "updatedBy": { "type": "string", "description": "UID of the admin who last updated the settings." }
+        "appName": { "type": "string" },
+        "appLogo": { "type": "string" },
+        "appDetails": { "type": "string" },
+        "updatedAt": { "type": "number" },
+        "updatedBy": { "type": "string" }
       },
-      "required": ["appName", "appLogo", "appDetails"]
+      "required": ["appName"]
     }
   },
   "firestore": {
-    "/settings/global": {
-      "schema": "AppSettings",
-      "description": "Global application settings."
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User profiles"
     },
     "/videos/{videoId}": {
       "schema": "Video",
-      "description": "Collection of videos available on the platform."
-    },
-    "/users/{userId}": {
-      "schema": "UserProfile",
-      "description": "Collection of user profiles."
-    },
-    "/users/{userId}/mylist/{videoId}": {
-      "schema": "object",
-      "description": "Subcollection of videos saved by the user."
-    },
-    "/users/{userId}/savedPlaylists/{playlistId}": {
-      "schema": "object",
-      "description": "Subcollection of playlists saved by the user."
-    },
-    "/users/{userId}/history/{videoId}": {
-      "schema": "object",
-      "description": "Subcollection of videos watched by the user with timestamps and playback progress."
+      "description": "Video metadata"
     },
     "/playlists/{playlistId}": {
       "schema": "Playlist",
-      "description": "Collection of curated playlists."
+      "description": "Video playlists"
+    },
+    "/settings/config": {
+      "schema": "AppSettings",
+      "description": "App configuration"
     }
   }
 }

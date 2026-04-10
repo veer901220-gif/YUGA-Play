@@ -3,8 +3,7 @@ import { useState, useRef, useEffect } from 'react';
 import { X } from 'lucide-react';
 import { Video, AppSettings } from '../types';
 import { motion } from 'motion/react';
-import { db } from '../firebase';
-import { doc, onSnapshot } from 'firebase/firestore';
+import { api } from '../api';
 
 interface VideoPlayerProps {
   video: Video;
@@ -26,12 +25,15 @@ export default function VideoPlayer({ video, onClose, initialTime = 0, onProgres
   const Player = ReactPlayer as any;
 
   useEffect(() => {
-    const unsubscribeSettings = onSnapshot(doc(db, 'settings', 'global'), (doc) => {
-      if (doc.exists()) {
-        setAppSettings(doc.data() as AppSettings);
+    const fetchSettings = async () => {
+      try {
+        const settings = await api.getSettings();
+        setAppSettings(settings);
+      } catch (error) {
+        console.error('Error fetching settings:', error);
       }
-    });
-    return () => unsubscribeSettings();
+    };
+    fetchSettings();
   }, []);
 
   const isDriveLink = video.url.includes('drive.google.com') || video.url.includes('docs.google.com');

@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { auth, db, handleFirestoreError, OperationType } from './firebase';
-import { onAuthStateChanged } from 'firebase/auth';
-import { collection, query, orderBy, onSnapshot, doc, getDoc, Unsubscribe, deleteDoc, writeBatch, updateDoc, limit } from 'firebase/firestore';
+import { useAuth } from './context/AuthContext';
+import { api } from './api';
 import { Video, Playlist, AppSettings } from './types';
 import Navbar from './components/Navbar';
 import VideoCard from './components/VideoCard';
@@ -11,7 +10,6 @@ import AdminDashboard from './components/AdminDashboard';
 import PlaylistManager from './components/PlaylistManager';
 import { Play, Film, Search, Filter, LayoutGrid, List, PlaySquare, Plus, MoreVertical, Trash2, BookmarkPlus, Folder, CheckCircle2, History, Edit2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { setDoc } from 'firebase/firestore';
 
 function PlaylistCard({ 
   playlist, 
@@ -133,8 +131,7 @@ function PlaylistCard({
 }
 
 export default function App() {
-  const [user, setUser] = useState<any>(null);
-  const [isAdmin, setIsAdmin] = useState(false);
+  const { user, isAdmin, isAuthReady } = useAuth();
   const [videos, setVideos] = useState<Video[]>([]);
   const [selectedVideo, setSelectedVideo] = useState<Video | null>(null);
   const [loading, setLoading] = useState(true);
@@ -144,7 +141,7 @@ export default function App() {
   const [playlistToEdit, setPlaylistToEdit] = useState<Playlist | null>(null);
   const [isAdminUploadOpen, setIsAdminUploadOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<'home' | 'playlists' | 'mylist' | 'history'>('home');
-  const [myList, setMyList] = useState<Video[]>([]);
+  const [myListIds, setMyListIds] = useState<string[]>([]);
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [selectedPlaylist, setSelectedPlaylist] = useState<Playlist | null>(null);
   const [playlistToDelete, setPlaylistToDelete] = useState<Playlist | null>(null);
@@ -163,12 +160,10 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
 
-    const userRef = doc(db, 'users', user.uid);
-    
     // Set online on mount
     const setOnline = async () => {
       try {
-        await updateDoc(userRef, {
+        await api.updateUser(user.uid, {
           isOnline: true,
           lastActive: Date.now(),
           sessionStart: Date.now()
@@ -181,7 +176,7 @@ export default function App() {
     setOnline();
 
     const handleTabClose = () => {
-      updateDoc(userRef, {
+      api.updateUser(user.uid, {
         isOnline: false,
         lastActive: Date.now()
       }).catch(e => console.error("Error setting offline status on tab close:", e));
@@ -192,10 +187,7 @@ export default function App() {
     // Heartbeat every 60 seconds
     const interval = setInterval(async () => {
       try {
-        await updateDoc(userRef, {
-          lastActive: Date.now(),
-          isOnline: true
-        });
+        await api.ping(user.uid);
       } catch (e) {
         console.error("Error updating heartbeat:", e);
       }
@@ -205,76 +197,67 @@ export default function App() {
     return () => {
       clearInterval(interval);
       window.removeEventListener('beforeunload', handleTabClose);
-      updateDoc(userRef, {
+      api.updateUser(user.uid, {
         isOnline: false,
         lastActive: Date.now()
       }).catch(e => console.error("Error setting offline status:", e));
     };
   }, [user]);
 
+  // Data Fetching
+  const fetchData = async () => {
+    try {
+      const [videosData, playlistsData, settingsData] = await Promise.all([
+        api.getVideos(),
+        api.getPlaylists(),
+        api.getSettings()
+      ]);
+      setVideos(videosData);
+      setPlaylists(playlistsData);
+      setAppSettings(settingsData);
+    } catch (error) {
+      console.error("Error fetching data:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    let unsubscribeVideos: Unsubscribe | null = null;
-    let unsubscribePlaylists: Unsubscribe | null = null;
+    if (isAuthReady) {
+      fetchData();
+    }
+  }, [isAuthReady]);
 
-    const unsubscribeAuth = onAuthStateChanged(auth, async (currentUser) => {
-      setUser(currentUser);
-      
-      if (unsubscribeVideos) {
-        unsubscribeVideos();
-        unsubscribeVideos = null;
+  // Listen for updates from other components
+  useEffect(() => {
+    const handleMyListUpdate = (e: any) => {
+      if (user && e.detail.userId === user.uid) {
+        setMyListIds(e.detail.list);
       }
-      if (unsubscribePlaylists) {
-        unsubscribePlaylists();
-        unsubscribePlaylists = null;
-      }
+    };
+    const handleVideoDeleted = () => fetchData();
+    const handleVideoUpdated = () => fetchData();
+    const handlePlaylistUpdated = () => fetchData();
 
-      if (currentUser) {
-        const isDefaultAdmin = currentUser.email === 'karmveer901220@gmail.com';
-        try {
-          const userDoc = await getDoc(doc(db, 'users', currentUser.uid));
-          setIsAdmin(isDefaultAdmin || (userDoc.exists() && userDoc.data().role === 'admin'));
-        } catch (error) {
-          console.error("Error fetching user profile:", error);
-          setIsAdmin(isDefaultAdmin);
-        }
-
-        const q = query(collection(db, 'videos'), orderBy('createdAt', 'desc'));
-        unsubscribeVideos = onSnapshot(q, (snapshot) => {
-          const videoData = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
-          })) as Video[];
-          setVideos(videoData);
-          setLoading(false);
-        }, (error) => {
-          handleFirestoreError(error, OperationType.GET, 'videos');
-        });
-
-        // Fetch all playlists (or just admin ones, but usually all)
-        const pq = query(collection(db, 'playlists'), orderBy('createdAt', 'desc'));
-        unsubscribePlaylists = onSnapshot(pq, (snapshot) => {
-          const playlistData = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
-          })) as Playlist[];
-          setPlaylists(playlistData);
-        }, (error) => {
-          handleFirestoreError(error, OperationType.GET, 'playlists');
-        });
-      } else {
-        setIsAdmin(false);
-        setVideos([]);
-        setPlaylists([]);
-        setLoading(false);
-      }
-    });
+    window.addEventListener('mylist-updated', handleMyListUpdate);
+    window.addEventListener('video-deleted', handleVideoDeleted);
+    window.addEventListener('video-updated', handleVideoUpdated);
+    window.addEventListener('playlist-updated', handlePlaylistUpdated);
 
     return () => {
-      unsubscribeAuth();
-      if (unsubscribeVideos) unsubscribeVideos();
-      if (unsubscribePlaylists) unsubscribePlaylists();
+      window.removeEventListener('mylist-updated', handleMyListUpdate);
+      window.removeEventListener('video-deleted', handleVideoDeleted);
+      window.removeEventListener('video-updated', handleVideoUpdated);
+      window.removeEventListener('playlist-updated', handlePlaylistUpdated);
     };
-  }, []);
+  }, [user]);
+
+  // Refresh data periodically or on specific actions
+  useEffect(() => {
+    if (!user) return;
+    const interval = setInterval(fetchData, 30000); // Refresh every 30s
+    return () => clearInterval(interval);
+  }, [user]);
 
   const filteredVideos = videos.filter(v => {
     const query = searchQuery.toLowerCase().trim();
@@ -282,6 +265,8 @@ export default function App() {
     return (v.title?.toLowerCase() || '').includes(query) ||
            (v.description?.toLowerCase() || '').includes(query);
   });
+
+  const myList = videos.filter(v => myListIds.includes(v.id));
 
   const displayVideos = (() => {
     const query = searchQuery.toLowerCase().trim();
@@ -296,106 +281,79 @@ export default function App() {
     );
   })();
 
+  // My List & History (Firestore)
   useEffect(() => {
     if (!user) {
-      setMyList([]);
+      setMyListIds([]);
+      setHistory([]);
+      setSavedPlaylistIds([]);
       return;
     }
 
-    const q = query(collection(db, 'users', user.uid, 'mylist'), orderBy('savedAt', 'desc'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const savedVideoIds = snapshot.docs.map(doc => doc.id);
-      const savedVideos = videos.filter(v => savedVideoIds.includes(v.id));
-      setMyList(savedVideos);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.GET, 'mylist');
-    });
-
-    const spq = query(collection(db, 'users', user.uid, 'savedPlaylists'));
-    const unsubscribeSavedPlaylists = onSnapshot(spq, (snapshot) => {
-      setSavedPlaylistIds(snapshot.docs.map(doc => doc.id));
-    });
-
-    const hq = query(collection(db, 'users', user.uid, 'history'), orderBy('watchedAt', 'desc'), limit(50));
-    const unsubscribeHistory = onSnapshot(hq, (snapshot) => {
-      const sortedHistory = snapshot.docs.map(doc => {
-        const video = videos.find(v => v.id === doc.id);
-        return video ? { ...video, watchedAt: doc.data().watchedAt, progress: doc.data().progress } : null;
-      }).filter(Boolean) as Video[];
-      setHistory(sortedHistory);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.GET, 'history');
-    });
-
-    const unsubscribeSettings = onSnapshot(doc(db, 'settings', 'global'), (doc) => {
-      if (doc.exists()) {
-        setAppSettings(doc.data() as AppSettings);
-      }
-    });
-
-    return () => {
-      unsubscribe();
-      unsubscribeSavedPlaylists();
-      unsubscribeHistory();
-      unsubscribeSettings();
-    };
-  }, [user, videos]);
+    setMyListIds(user.myList || []);
+    setHistory(user.history || []);
+    setSavedPlaylistIds(user.savedPlaylists || []);
+  }, [user]);
 
   const handleDeletePlaylist = async () => {
     if (!playlistToDelete) return;
     try {
-      await deleteDoc(doc(db, 'playlists', playlistToDelete.id));
+      await api.deletePlaylist(playlistToDelete.id);
+      setPlaylists(prev => prev.filter(p => p.id !== playlistToDelete.id));
       setPlaylistToDelete(null);
+      
+      // Also update saved playlists for all users if needed, but for now just local
+      if (user && savedPlaylistIds.includes(playlistToDelete.id)) {
+        const newSavedIds = savedPlaylistIds.filter(id => id !== playlistToDelete.id);
+        setSavedPlaylistIds(newSavedIds);
+        await api.updateSavedPlaylists(user.uid, newSavedIds);
+      }
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `playlists/${playlistToDelete.id}`);
+      console.error("Error deleting playlist:", error);
     }
   };
 
   const handleSavePlaylist = async (playlist: Playlist) => {
     if (!user) return;
-    try {
-      const isSaved = savedPlaylistIds.includes(playlist.id);
-      if (isSaved) {
-        await deleteDoc(doc(db, 'users', user.uid, 'savedPlaylists', playlist.id));
-      } else {
-        await setDoc(doc(db, 'users', user.uid, 'savedPlaylists', playlist.id), {
-          savedAt: Date.now()
-        });
-      }
-      setOpenMenuPlaylistId(null);
-    } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `users/${user.uid}/savedPlaylists/${playlist.id}`);
+    const isSaved = savedPlaylistIds.includes(playlist.id);
+    let newSavedIds;
+    if (isSaved) {
+      newSavedIds = savedPlaylistIds.filter(id => id !== playlist.id);
+    } else {
+      newSavedIds = [...savedPlaylistIds, playlist.id];
     }
+    setSavedPlaylistIds(newSavedIds);
+    await api.updateSavedPlaylists(user.uid, newSavedIds);
+    setOpenMenuPlaylistId(null);
   };
 
   const handlePlayVideo = async (video: Video) => {
     setSelectedVideo(video);
     if (!user) return;
-    try {
-      await setDoc(doc(db, 'users', user.uid, 'history', video.id), {
-        watchedAt: Date.now()
-      });
-    } catch (error) {
-      console.error("Error adding to history:", error);
-    }
+    
+    const newHistory = [
+      { ...video, watchedAt: Date.now() },
+      ...history.filter(h => h.id !== video.id)
+    ].slice(0, 50);
+    
+    setHistory(newHistory);
+    await api.updateHistory(user.uid, newHistory);
   };
 
   const lastSaveTimeRef = useRef<number>(0);
   const handleVideoProgress = async (video: Video, progress: number) => {
     if (!user) return;
     
-    // Throttle saves to every 5 seconds
+    // Throttle saves to every 10 seconds for history progress
     const now = Date.now();
-    if (now - lastSaveTimeRef.current < 5000) return;
+    if (now - lastSaveTimeRef.current < 10000) return;
     lastSaveTimeRef.current = now;
 
-    try {
-      await setDoc(doc(db, 'users', user.uid, 'history', video.id), {
-        progress
-      }, { merge: true });
-    } catch (error) {
-      console.error("Error saving progress:", error);
-    }
+    const newHistory = history.map(h => 
+      h.id === video.id ? { ...h, progress } : h
+    );
+    setHistory(newHistory);
+    await api.updateHistory(user.uid, newHistory);
   };
 
   return (

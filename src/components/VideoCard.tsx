@@ -1,7 +1,7 @@
 import { Trash2, Play, Clock, User, Plus, CheckCircle2, MoreVertical, Share2 } from 'lucide-react';
 import { Video } from '../types';
-import { auth, db, handleFirestoreError, OperationType } from '../firebase';
-import { doc, deleteDoc, setDoc, onSnapshot } from 'firebase/firestore';
+import { api } from '../api';
+import { useAuth } from '../context/AuthContext';
 import { motion, AnimatePresence } from 'motion/react';
 import { useState, useEffect, useRef } from 'react';
 import { cn } from '../lib/utils';
@@ -19,23 +19,19 @@ export default function VideoCard({
   onPlay,
   variant = 'default'
 }: VideoCardProps) {
+  const { user } = useAuth();
   const [isSaved, setIsSaved] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [showMenu, setShowMenu] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
   const isCompact = variant === 'compact';
 
   useEffect(() => {
-    const user = auth.currentUser;
     if (!user) return;
-
-    const unsubscribe = onSnapshot(doc(db, 'users', user.uid, 'mylist', video.id), (doc) => {
-      setIsSaved(doc.exists());
-    });
-
-    return () => unsubscribe();
-  }, [video.id]);
+    setIsSaved(user.myList?.includes(video.id) || false);
+  }, [video.id, user?.myList]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -49,23 +45,26 @@ export default function VideoCard({
 
   const handleSave = async (e: React.MouseEvent) => {
     e.stopPropagation();
-    const user = auth.currentUser;
     if (!user) return;
 
     setIsSaving(true);
     setShowMenu(false);
     try {
-      const savedDocRef = doc(db, 'users', user.uid, 'mylist', video.id);
+      let newList = user.myList ? [...user.myList] : [];
+      
       if (isSaved) {
-        await deleteDoc(savedDocRef);
+        newList = newList.filter(id => id !== video.id);
       } else {
-        await setDoc(savedDocRef, {
-          savedAt: Date.now(),
-          videoId: video.id
-        });
+        newList = [...newList, video.id];
       }
+      
+      await api.updateMyList(user.uid, newList);
+      setIsSaved(!isSaved);
+      
+      // Dispatch a custom event so App.tsx can update its state if needed
+      window.dispatchEvent(new CustomEvent('mylist-updated', { detail: { userId: user.uid, list: newList } }));
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `mylist/${video.id}`);
+      console.error('Error saving to list:', error);
     } finally {
       setIsSaving(false);
     }
@@ -92,13 +91,19 @@ export default function VideoCard({
     }
   };
 
-  const handleDelete = async (e: React.MouseEvent) => {
-    e.stopPropagation();
-    setShowMenu(false);
+  const handleDelete = async (e?: React.MouseEvent) => {
+    if (e) {
+      e.stopPropagation();
+      setShowMenu(false);
+    }
+    
     try {
-      await deleteDoc(doc(db, 'videos', video.id));
+      await api.deleteVideo(video.id);
+      window.dispatchEvent(new CustomEvent('video-deleted', { detail: { videoId: video.id } }));
+      setShowDeleteConfirm(false);
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `videos/${video.id}`);
+      console.error('Error deleting video:', error);
+      alert('Failed to delete video');
     }
   };
 
@@ -183,7 +188,7 @@ export default function VideoCard({
                   </button>
                   {isAdmin && (
                     <button 
-                      onClick={handleDelete}
+                      onClick={(e) => { e.stopPropagation(); setShowMenu(false); setShowDeleteConfirm(true); }}
                       className="w-full flex items-center gap-3 px-4 py-3 text-sm font-medium text-red-500 hover:bg-red-500/10 transition-colors"
                     >
                       <Trash2 className="w-4 h-4" />
@@ -195,6 +200,40 @@ export default function VideoCard({
             </AnimatePresence>
           </div>
         </div>
+
+      {/* Delete Confirmation Overlay */}
+      <AnimatePresence>
+        {showDeleteConfirm && (
+          <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-black/80 backdrop-blur-sm" onClick={(e) => e.stopPropagation()}>
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.9 }}
+              className="w-full max-w-sm bg-[#121212] border border-white/10 rounded-3xl p-8 shadow-2xl text-center"
+            >
+              <div className="w-20 h-20 bg-red-600/10 rounded-full flex items-center justify-center mx-auto mb-6">
+                <Trash2 className="w-10 h-10 text-red-600" />
+              </div>
+              <h3 className="text-xl font-black text-white mb-2">Delete Video?</h3>
+              <p className="text-white/40 text-sm mb-8">Are you sure you want to delete <span className="text-white font-bold">"{video.title}"</span>? This action cannot be undone.</p>
+              <div className="grid grid-cols-2 gap-4">
+                <button 
+                  onClick={() => setShowDeleteConfirm(false)}
+                  className="py-3 px-6 bg-white/5 hover:bg-white/10 text-white font-bold rounded-2xl transition-all active:scale-95"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={() => handleDelete()}
+                  className="py-3 px-6 bg-red-600 hover:bg-red-500 text-white font-bold rounded-2xl transition-all active:scale-95 shadow-lg shadow-red-600/20"
+                >
+                  Delete
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
 
       <div className={cn(isCompact ? "flex-1 min-w-0 py-1" : "p-5")}>
         <h3 className={cn(

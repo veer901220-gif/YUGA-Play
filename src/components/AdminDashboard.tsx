@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
-import { db, handleFirestoreError, OperationType } from '../firebase';
-import { collection, onSnapshot, query, orderBy, doc, deleteDoc, updateDoc, setDoc, getDoc } from 'firebase/firestore';
+import { api } from '../api';
 import { Video, UserProfile, AppSettings } from '../types';
-import { Users, Film, Activity, ArrowLeft, Shield, Mail, Calendar, Hash, UserMinus, Settings, Save, Globe, Image as ImageIcon, Info, UserPlus, ShieldAlert } from 'lucide-react';
+import { Users, Film, Activity, ArrowLeft, Shield, Settings, Save, Globe, Image as ImageIcon, Info, UserMinus, ShieldAlert } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from 'recharts';
 import { cn } from '../lib/utils';
@@ -17,6 +16,7 @@ export default function AdminDashboard({ onClose }: AdminDashboardProps) {
   const [loading, setLoading] = useState(true);
   const [isDeletingUser, setIsDeletingUser] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<'overview' | 'users' | 'settings'>('overview');
+  const [showConfirmModal, setShowConfirmModal] = useState<{ type: 'delete' | 'role', userId: string, displayName: string, role?: 'admin' | 'user' } | null>(null);
   
   const [appSettings, setAppSettings] = useState<AppSettings>({
     appName: 'YUGA Play',
@@ -27,62 +27,62 @@ export default function AdminDashboard({ onClose }: AdminDashboardProps) {
   });
   const [isSavingSettings, setIsSavingSettings] = useState(false);
 
-  const MAIN_ADMIN_EMAIL = 'karmveer901220@gmail.com';
+  const SUPER_ADMIN_EMAIL = 'karmveer901220@gmail.com';
 
   useEffect(() => {
-    const qUsers = query(collection(db, 'users'), orderBy('email', 'asc'));
-    const unsubscribeUsers = onSnapshot(qUsers, (snapshot) => {
-      const userData = snapshot.docs.map(doc => doc.data() as UserProfile);
-      setUsers(userData);
-    }, (error) => handleFirestoreError(error, OperationType.GET, 'users'));
-
-    const qVideos = query(collection(db, 'videos'), orderBy('createdAt', 'desc'));
-    const unsubscribeVideos = onSnapshot(qVideos, (snapshot) => {
-      const videoData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() } as Video));
-      setVideos(videoData);
-      setLoading(false);
-    }, (error) => handleFirestoreError(error, OperationType.GET, 'videos'));
-
-    const unsubscribeSettings = onSnapshot(doc(db, 'settings', 'global'), (doc) => {
-      if (doc.exists()) {
-        setAppSettings(doc.data() as AppSettings);
+    const fetchData = async () => {
+      try {
+        const [usersData, videosData, settingsData] = await Promise.all([
+          api.getUsers(),
+          api.getVideos(),
+          api.getSettings()
+        ]);
+        setUsers(usersData);
+        setVideos(videosData);
+        setAppSettings(settingsData);
+      } catch (error) {
+        console.error('Error fetching admin data:', error);
+      } finally {
+        setLoading(false);
       }
-    });
-
-    return () => {
-      unsubscribeUsers();
-      unsubscribeVideos();
-      unsubscribeSettings();
     };
+
+    fetchData();
+    
+    // Set up polling for "live" feel
+    const interval = setInterval(fetchData, 10000);
+    return () => clearInterval(interval);
   }, []);
 
-  const handleRemoveUser = async (userId: string, userEmail: string) => {
-    if (userEmail === MAIN_ADMIN_EMAIL) {
-      alert("Main Admin cannot be removed!");
+  const handleRemoveUser = async (userId: string, email: string | null) => {
+    if (email === SUPER_ADMIN_EMAIL) {
       return;
     }
     if (isDeletingUser) return;
-    if (!confirm(`Are you sure you want to remove ${userEmail}?`)) return;
 
     setIsDeletingUser(userId);
     try {
-      await deleteDoc(doc(db, 'users', userId));
+      await api.deleteUser(userId);
+      setUsers(prev => prev.filter(u => u.uid !== userId));
     } catch (error) {
-      handleFirestoreError(error, OperationType.DELETE, `users/${userId}`);
+      console.error('Error removing user:', error);
     } finally {
       setIsDeletingUser(null);
+      setShowConfirmModal(null);
     }
   };
 
-  const handleUpdateRole = async (userId: string, userEmail: string, newRole: 'admin' | 'user') => {
-    if (userEmail === MAIN_ADMIN_EMAIL) {
-      alert("Main Admin's role cannot be changed!");
+  const handleUpdateRole = async (userId: string, email: string | null, newRole: 'admin' | 'user') => {
+    if (email === SUPER_ADMIN_EMAIL) {
       return;
     }
     try {
-      await updateDoc(doc(db, 'users', userId), { role: newRole });
+      await api.updateUserRole(userId, newRole);
+      setUsers(prev => prev.map(u => u.uid === userId ? { ...u, role: newRole } : u));
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, `users/${userId}`);
+      console.error('Error updating role:', error);
+    } finally {
+      setShowConfirmModal(null);
     }
   };
 
@@ -90,29 +90,32 @@ export default function AdminDashboard({ onClose }: AdminDashboardProps) {
     e.preventDefault();
     setIsSavingSettings(true);
     try {
-      await setDoc(doc(db, 'settings', 'global'), {
+      const updatedSettings = {
         ...appSettings,
         updatedAt: Date.now(),
-        updatedBy: users.find(u => u.email === MAIN_ADMIN_EMAIL)?.uid || 'system'
-      });
-      alert('Settings updated successfully!');
+        updatedBy: SUPER_ADMIN_EMAIL
+      };
+      await api.updateSettings(updatedSettings);
+      setAppSettings(updatedSettings);
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'settings/global');
+      console.error('Error saving settings:', error);
     } finally {
       setIsSavingSettings(false);
     }
   };
 
   const stats = [
-    { label: 'Total Users', value: users.length, icon: Users, color: 'text-blue-500', bg: 'bg-blue-500/10' },
+    { label: 'Total Registered', value: users.length, icon: Users, color: 'text-blue-500', bg: 'bg-blue-500/10' },
+    { label: 'Online Now', value: users.filter(u => u.isOnline).length, icon: Activity, color: 'text-green-500', bg: 'bg-green-500/10' },
+    { label: 'Offline Users', value: users.length - users.filter(u => u.isOnline).length, icon: UserMinus, color: 'text-red-500', bg: 'bg-red-500/10' },
     { label: 'Total Videos', value: videos.length, icon: Film, color: 'text-orange-500', bg: 'bg-orange-500/10' },
-    { label: 'Active Admins', value: users.filter(u => u.role === 'admin').length, icon: Shield, color: 'text-purple-500', bg: 'bg-purple-500/10' },
   ];
 
   const chartData = [
-    { name: 'Users', value: users.length },
+    { name: 'Total', value: users.length },
+    { name: 'Online', value: users.filter(u => u.isOnline).length },
+    { name: 'Offline', value: users.length - users.filter(u => u.isOnline).length },
     { name: 'Videos', value: videos.length },
-    { name: 'Admins', value: users.filter(u => u.role === 'admin').length },
   ];
 
   const formatLastActive = (timestamp: number) => {
@@ -167,7 +170,19 @@ export default function AdminDashboard({ onClose }: AdminDashboardProps) {
             </button>
             <div>
               <h1 className="text-2xl sm:text-4xl font-black tracking-tighter text-white">{appSettings.appName} Dashboard</h1>
-              <p className="text-white/40 text-[10px] sm:text-sm font-medium uppercase tracking-widest">Management System</p>
+              <div className="flex items-center gap-4 mt-1">
+                <p className="text-white/40 text-[10px] sm:text-sm font-medium uppercase tracking-widest">Management System</p>
+                <div className="flex items-center gap-3 border-l border-white/10 pl-4">
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
+                    <span className="text-[10px] text-green-500 font-black uppercase tracking-widest">{users.filter(u => u.isOnline).length} Online</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-1.5 h-1.5 bg-red-500/40 rounded-full" />
+                    <span className="text-[10px] text-white/40 font-black uppercase tracking-widest">{users.length - users.filter(u => u.isOnline).length} Offline</span>
+                  </div>
+                </div>
+              </div>
             </div>
           </div>
           <div className="flex items-center gap-2 px-3 sm:px-4 py-1.5 sm:py-2 bg-orange-600/10 border border-orange-600/20 rounded-full text-orange-500 text-[10px] sm:text-xs font-bold uppercase tracking-widest self-start sm:self-auto">
@@ -220,7 +235,7 @@ export default function AdminDashboard({ onClose }: AdminDashboardProps) {
               className="space-y-8"
             >
               {/* Stats Grid */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 sm:gap-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
                 {stats.map((stat, i) => (
                   <motion.div 
                     key={i}
@@ -233,15 +248,26 @@ export default function AdminDashboard({ onClose }: AdminDashboardProps) {
                     <div className={cn("w-12 h-12 sm:w-14 sm:h-14 rounded-xl sm:rounded-2xl flex items-center justify-center mb-4 sm:mb-6", stat.bg)}>
                       <stat.icon className={cn("w-6 h-6 sm:w-7 sm:h-7", stat.color)} />
                     </div>
-                    <p className="text-white/40 text-[10px] sm:text-sm font-bold uppercase tracking-widest mb-1">{stat.label}</p>
-                    <h3 className="text-3xl sm:text-5xl font-black text-white tracking-tighter">{stat.value}</h3>
+                    <div className="flex items-end justify-between">
+                      <div>
+                        <p className="text-white/40 text-[10px] sm:text-sm font-bold uppercase tracking-widest mb-1">{stat.label}</p>
+                        <h3 className="text-3xl sm:text-5xl font-black text-white tracking-tighter">{stat.value}</h3>
+                      </div>
+                      {stat.label === 'Online Now' && users.length > 0 && (
+                        <div className="text-right pb-1">
+                          <p className="text-[10px] font-black text-green-500 uppercase tracking-widest">
+                            {Math.round((users.filter(u => u.isOnline).length / users.length) * 100)}% Active
+                          </p>
+                        </div>
+                      )}
+                    </div>
                   </motion.div>
                 ))}
               </div>
 
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 sm:gap-8">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 sm:gap-8">
                 {/* Chart */}
-                <div className="bg-[#121212] border border-white/5 p-6 sm:p-8 rounded-2xl sm:rounded-[2.5rem]">
+                <div className="lg:col-span-2 bg-[#121212] border border-white/5 p-6 sm:p-8 rounded-2xl sm:rounded-[2.5rem]">
                   <h3 className="text-lg sm:text-xl font-bold text-white mb-6 sm:mb-8 flex items-center gap-2">
                     <Activity className="w-4 h-4 sm:w-5 sm:h-5 text-orange-500" />
                     Platform Overview
@@ -263,33 +289,59 @@ export default function AdminDashboard({ onClose }: AdminDashboardProps) {
                   </div>
                 </div>
 
-                {/* Recent Users */}
+                {/* Online Users Summary */}
                 <div className="bg-[#121212] border border-white/5 p-6 sm:p-8 rounded-2xl sm:rounded-[2.5rem]">
                   <h3 className="text-lg sm:text-xl font-bold text-white mb-6 sm:mb-8 flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <Users className="w-4 h-4 sm:w-5 sm:h-5 text-blue-500" />
-                      Recent Users
+                      <Activity className="w-4 h-4 sm:w-5 sm:h-5 text-green-500" />
+                      Online Now
                     </div>
+                    <span className="text-xs text-green-500 font-black">{users.filter(u => u.isOnline).length}</span>
                   </h3>
                   <div className="space-y-4 max-h-[300px] overflow-y-auto pr-2 custom-scrollbar">
-                    {users.slice(0, 5).map((user) => (
-                      <div key={user.uid} className="flex items-center justify-between p-4 bg-white/5 rounded-2xl border border-white/5">
-                        <div className="flex items-center gap-3">
-                          <img src={user.photoURL} alt={user.displayName} className="w-8 h-8 rounded-full border border-white/10" referrerPolicy="no-referrer" />
-                          <div>
-                            <p className="text-xs font-bold text-white truncate max-w-[120px]">{user.displayName}</p>
-                            <p className="text-[10px] text-white/40 uppercase tracking-widest">{user.role}</p>
+                    {users.filter(u => u.isOnline).length > 0 ? (
+                      users.filter(u => u.isOnline).map((user) => (
+                        <div key={user.uid} className="flex items-center justify-between p-4 bg-green-500/5 rounded-2xl border border-green-500/10">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-full bg-green-600 flex items-center justify-center text-white font-bold text-xs border border-white/10">
+                              {user.displayName.charAt(0)}
+                            </div>
+                            <div>
+                              <p className="text-xs font-bold text-white truncate max-w-[120px]">{user.displayName}</p>
+                              <p className="text-[10px] text-green-500/60 font-bold uppercase tracking-widest">Active for {user.sessionStart ? formatDuration(user.sessionStart) : 'N/A'}</p>
+                            </div>
                           </div>
+                          <div className="w-2 h-2 bg-green-500 rounded-full animate-pulse" />
                         </div>
-                        {user.isOnline && (
-                          <span className="flex items-center gap-1 text-[10px] text-green-500 font-black uppercase tracking-widest">
-                            <span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse" />
-                            Online
-                          </span>
-                        )}
+                      ))
+                    ) : (
+                      <div className="flex flex-col items-center justify-center py-10 text-center opacity-20">
+                        <Users className="w-10 h-10 mb-2" />
+                        <p className="text-[10px] font-bold uppercase tracking-widest">No users online</p>
                       </div>
-                    ))}
+                    )}
                   </div>
+                </div>
+              </div>
+
+              {/* Recent Users List */}
+              <div className="bg-[#121212] border border-white/5 p-6 sm:p-8 rounded-2xl sm:rounded-[2.5rem]">
+                <h3 className="text-lg sm:text-xl font-bold text-white mb-6 sm:mb-8 flex items-center gap-2">
+                  <Users className="w-4 h-4 sm:w-5 sm:h-5 text-blue-500" />
+                  Recently Added Users
+                </h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                  {[...users].sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0)).slice(0, 8).map((user) => (
+                    <div key={user.uid} className="flex items-center gap-3 p-4 bg-white/5 rounded-2xl border border-white/5">
+                      <div className="w-10 h-10 rounded-full bg-orange-600 flex items-center justify-center text-white font-bold text-sm border border-white/10">
+                        {user.displayName.charAt(0)}
+                      </div>
+                      <div className="overflow-hidden">
+                        <p className="text-sm font-bold text-white truncate">{user.displayName}</p>
+                        <p className="text-[10px] text-white/40 uppercase tracking-widest">Joined {user.createdAt ? new Date(user.createdAt).toLocaleDateString() : 'N/A'}</p>
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             </motion.div>
@@ -313,6 +365,7 @@ export default function AdminDashboard({ onClose }: AdminDashboardProps) {
                     <tr className="bg-white/5">
                       <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-white/40">Profile</th>
                       <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-white/40">Role</th>
+                      <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-white/40">Session Info</th>
                       <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-white/40">Status</th>
                       <th className="px-6 py-4 text-[10px] font-black uppercase tracking-widest text-white/40 text-right">Actions</th>
                     </tr>
@@ -322,10 +375,16 @@ export default function AdminDashboard({ onClose }: AdminDashboardProps) {
                       <tr key={user.uid} className="hover:bg-white/5 transition-colors">
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-3">
-                            <img src={user.photoURL} className="w-8 h-8 rounded-full" referrerPolicy="no-referrer" />
+                            {user.photoURL ? (
+                              <img src={user.photoURL} className="w-8 h-8 rounded-full" referrerPolicy="no-referrer" />
+                            ) : (
+                              <div className="w-8 h-8 rounded-full bg-orange-600 flex items-center justify-center text-white font-bold text-xs">
+                                {user.displayName.charAt(0)}
+                              </div>
+                            )}
                             <div className="overflow-hidden">
                               <p className="text-sm font-bold text-white truncate max-w-[150px]">{user.displayName}</p>
-                              <p className="text-[10px] text-white/40 truncate max-w-[150px]">{user.email}</p>
+                              <p className="text-[10px] text-white/40 truncate max-w-[150px]">{user.email || 'Guest User'}</p>
                             </div>
                           </div>
                         </td>
@@ -337,8 +396,28 @@ export default function AdminDashboard({ onClose }: AdminDashboardProps) {
                             )}>
                               {user.role}
                             </span>
-                            {user.email === MAIN_ADMIN_EMAIL && (
-                              <ShieldAlert className="w-3 h-3 text-orange-500" title="Main Admin" />
+                            {user.email === SUPER_ADMIN_EMAIL && (
+                              <ShieldAlert className="w-3 h-3 text-orange-500" />
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-6 py-4">
+                          <div className="space-y-1">
+                            <div className="text-[10px] text-white/40 font-bold uppercase tracking-widest flex items-center gap-1">
+                              <Info className="w-3 h-3" />
+                              Session: {user.sessionStart ? new Date(user.sessionStart).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'N/A'} - {user.isOnline ? 'Now' : (user.lastActive ? new Date(user.lastActive).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'N/A')}
+                            </div>
+                            <div className="text-[10px] text-white/40 font-bold uppercase tracking-widest flex items-center gap-1">
+                              <Activity className="w-3 h-3" />
+                              Last Active: {user.lastActive ? formatLastActive(user.lastActive) : 'N/A'}
+                            </div>
+                            {user.sessionStart && (
+                              <div className={cn(
+                                "text-[10px] font-black uppercase tracking-widest",
+                                user.isOnline ? "text-orange-500" : "text-white/20"
+                              )}>
+                                {user.isOnline ? 'Active for: ' : 'Session was: '}{formatDuration(user.sessionStart)}
+                              </div>
                             )}
                           </div>
                         </td>
@@ -354,11 +433,11 @@ export default function AdminDashboard({ onClose }: AdminDashboardProps) {
                         </td>
                         <td className="px-6 py-4 text-right">
                           <div className="flex items-center justify-end gap-2">
-                            {user.email !== MAIN_ADMIN_EMAIL && (
+                            {user.email !== SUPER_ADMIN_EMAIL && (
                               <>
                                 {user.role === 'admin' ? (
                                   <button 
-                                    onClick={() => handleUpdateRole(user.uid, user.email, 'user')}
+                                    onClick={() => setShowConfirmModal({ type: 'role', userId: user.uid, displayName: user.displayName, role: 'user' })}
                                     className="p-2 bg-blue-600/10 hover:bg-blue-600 text-blue-500 hover:text-white rounded-lg transition-all"
                                     title="Demote to User"
                                   >
@@ -366,7 +445,7 @@ export default function AdminDashboard({ onClose }: AdminDashboardProps) {
                                   </button>
                                 ) : (
                                   <button 
-                                    onClick={() => handleUpdateRole(user.uid, user.email, 'admin')}
+                                    onClick={() => setShowConfirmModal({ type: 'role', userId: user.uid, displayName: user.displayName, role: 'admin' })}
                                     className="p-2 bg-orange-600/10 hover:bg-orange-600 text-orange-500 hover:text-white rounded-lg transition-all"
                                     title="Promote to Admin"
                                   >
@@ -374,7 +453,7 @@ export default function AdminDashboard({ onClose }: AdminDashboardProps) {
                                   </button>
                                 )}
                                 <button 
-                                  onClick={() => handleRemoveUser(user.uid, user.email)}
+                                  onClick={() => setShowConfirmModal({ type: 'delete', userId: user.uid, displayName: user.displayName })}
                                   disabled={isDeletingUser === user.uid}
                                   className="p-2 bg-red-600/10 hover:bg-red-600 text-red-500 hover:text-white rounded-lg transition-all disabled:opacity-50"
                                   title="Remove User"
@@ -480,10 +559,56 @@ export default function AdminDashboard({ onClose }: AdminDashboardProps) {
           )}
         </AnimatePresence>
       </div>
+
+      {/* Confirmation Modal */}
+      <AnimatePresence>
+        {showConfirmModal && (
+          <div className="fixed inset-0 z-[120] flex items-center justify-center p-6 bg-black/80 backdrop-blur-sm">
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="w-full max-w-sm bg-[#121212] border border-white/10 rounded-3xl p-8 shadow-2xl text-center"
+            >
+              <div className={cn(
+                "w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6",
+                showConfirmModal.type === 'delete' ? "bg-red-600/20 text-red-500" : "bg-orange-600/20 text-orange-500"
+              )}>
+                {showConfirmModal.type === 'delete' ? <UserMinus className="w-8 h-8" /> : <Shield className="w-8 h-8" />}
+              </div>
+              <h3 className="text-xl font-black text-white mb-2">
+                {showConfirmModal.type === 'delete' ? 'Remove User?' : `Change Role to ${showConfirmModal.role}?`}
+              </h3>
+              <p className="text-white/40 text-sm mb-8">
+                Are you sure you want to {showConfirmModal.type === 'delete' ? 'remove' : `change the role of`} <span className="text-white font-bold">{showConfirmModal.displayName}</span>?
+              </p>
+              <div className="grid grid-cols-2 gap-4">
+                <button 
+                  onClick={() => setShowConfirmModal(null)}
+                  className="py-3 px-6 bg-white/5 hover:bg-white/10 text-white font-bold rounded-2xl transition-all active:scale-95"
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={() => {
+                    if (showConfirmModal.type === 'delete') {
+                      handleRemoveUser(showConfirmModal.userId, users.find(u => u.uid === showConfirmModal.userId)?.email || null);
+                    } else if (showConfirmModal.type === 'role' && showConfirmModal.role) {
+                      handleUpdateRole(showConfirmModal.userId, users.find(u => u.uid === showConfirmModal.userId)?.email || null, showConfirmModal.role);
+                    }
+                  }}
+                  className={cn(
+                    "py-3 px-6 text-white font-bold rounded-2xl transition-all active:scale-95 shadow-lg",
+                    showConfirmModal.type === 'delete' ? "bg-red-600 hover:bg-red-500 shadow-red-600/20" : "bg-orange-600 hover:bg-orange-500 shadow-orange-600/20"
+                  )}
+                >
+                  Confirm
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </motion.div>
   );
-}
-
-function cn(...inputs: any[]) {
-  return inputs.filter(Boolean).join(' ');
 }

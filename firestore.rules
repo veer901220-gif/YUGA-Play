@@ -5,25 +5,51 @@ service cloud.firestore {
     // Assumed Data Model
     // ===============================================================
     //
-    // Collection: videos
-    // Document ID: auto-generated
-    // Fields:
-    //   - title: string (required)
-    //   - description: string (optional)
-    //   - url: string (required, URL)
-    //   - thumbnailUrl: string (optional, URL)
-    //   - createdAt: number (required)
-    //   - authorId: string (required)
-    //   - authorName: string (optional)
-    //
     // Collection: users
-    // Document ID: userId (UID)
+    // Document ID: {userId}
     // Fields:
-    //   - uid: string (required)
-    //   - email: string (required, email)
-    //   - displayName: string (optional)
-    //   - photoURL: string (optional)
-    //   - role: string (required, enum: ['admin', 'user'])
+    //   - uid: string (required) - User ID
+    //   - email: string (required) - User email
+    //   - displayName: string (required) - User display name
+    //   - photoURL: string (optional) - User photo URL
+    //   - role: string (required, 'admin' | 'user') - User role
+    //   - isOnline: boolean (optional) - Online status
+    //   - lastActive: number (optional) - Last active timestamp
+    //   - sessionStart: number (optional) - Session start timestamp
+    //   - createdAt: number (optional) - Creation timestamp
+    //
+    // Collection: videos
+    // Document ID: {videoId}
+    // Fields:
+    //   - id: string (required) - Video ID
+    //   - title: string (required) - Video title
+    //   - description: string (optional) - Video description
+    //   - url: string (required) - Video URL
+    //   - thumbnailUrl: string (optional) - Video thumbnail URL
+    //   - createdAt: number (required) - Creation timestamp
+    //   - authorId: string (required) - Author ID
+    //   - authorName: string (required) - Author name
+    //   - authorPhotoURL: string (optional) - Author photo URL
+    //
+    // Collection: playlists
+    // Document ID: {playlistId}
+    // Fields:
+    //   - id: string (required) - Playlist ID
+    //   - title: string (required) - Playlist title
+    //   - description: string (optional) - Playlist description
+    //   - thumbnailUrl: string (optional) - Playlist thumbnail URL
+    //   - videoIds: list (required) - List of video IDs
+    //   - createdAt: number (required) - Creation timestamp
+    //   - authorId: string (required) - Author ID
+    //
+    // Collection: settings
+    // Document ID: config
+    // Fields:
+    //   - appName: string (required) - App name
+    //   - appLogo: string (optional) - App logo URL
+    //   - appDetails: string (optional) - App details
+    //   - updatedAt: number (optional) - Last update timestamp
+    //   - updatedBy: string (optional) - Last update by name
     //
     // ===============================================================
 
@@ -38,94 +64,69 @@ service cloud.firestore {
       return isAuthenticated() && request.auth.uid == userId;
     }
 
-    function isDefaultAdmin(email) {
-      return email == "karmveer901220@gmail.com";
-    }
-
     function isAdmin() {
       return isAuthenticated() &&
-        ( (isDefaultAdmin(request.auth.token.email) && request.auth.token.email_verified == true) ||
-          (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && 
-           get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') );
-    }
-
-    function isValidVideo(data) {
-      return data.keys().hasAll(['title', 'url', 'createdAt', 'authorId']) &&
-             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
-             data.url is string && (data.url.matches("^https://.*") || data.url.matches("^http://.*")) &&
-             data.createdAt is number &&
-             data.authorId == request.auth.uid;
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "karmveer901220@gmail.com" && request.auth.token.email_verified == true));
     }
 
     function isValidUser(data) {
-      return data.keys().hasAll(['uid', 'email', 'role']) &&
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'role']) &&
              data.uid is string &&
-             data.email is string && data.email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$") &&
-             data.role in ['admin', 'user'] &&
-             (!('isOnline' in data) || data.isOnline is bool) &&
-             (!('lastActive' in data) || data.lastActive is number) &&
-             (!('sessionStart' in data) || data.sessionStart is number);
+             data.email is string &&
+             data.displayName is string &&
+             data.role in ['admin', 'user'];
     }
 
-    function isValidSettings(data) {
-      return data.keys().hasAll(['appName', 'appLogo', 'appDetails']) &&
-             data.appName is string && data.appName.size() > 0 && data.appName.size() < 100 &&
-             data.appLogo is string && (data.appLogo == "" || data.appLogo.matches("^https://.*") || data.appLogo.matches("^http://.*")) &&
-             data.appDetails is string && data.appDetails.size() < 5000;
-    }
-
-    // ===============================================================
-    // Rules
-    // ===============================================================
-
-    match /settings/global {
-      allow read: if isAuthenticated();
-      allow write: if isAdmin() && isValidSettings(request.resource.data);
-    }
-
-    match /users/{userId} {
-      allow read: if isAuthenticated();
-      allow create: if isAuthenticated() && isOwner(userId) && isValidUser(request.resource.data) && 
-                    (request.resource.data.role == 'user' || (request.resource.data.role == 'admin' && isDefaultAdmin(request.auth.token.email)));
-      allow update: if (isAdmin() && !isDefaultAdmin(resource.data.email)) || 
-                    (isOwner(userId) && request.resource.data.role == resource.data.role && isValidUser(request.resource.data));
-      allow delete: if isAdmin() && !isDefaultAdmin(resource.data.email);
-
-      match /mylist/{videoId} {
-        allow read, write: if isOwner(userId);
-      }
-
-      match /savedPlaylists/{playlistId} {
-        allow read, write: if isOwner(userId);
-      }
-
-      match /history/{videoId} {
-        allow read, write: if isOwner(userId);
-      }
+    function isValidVideo(data) {
+      return data.keys().hasAll(['id', 'title', 'url', 'createdAt', 'authorId']) &&
+             data.id is string &&
+             data.title is string && data.title.size() < 200 &&
+             data.url is string &&
+             data.authorId is string;
     }
 
     function isValidPlaylist(data) {
-      return data.keys().hasAll(['title', 'videoIds', 'createdAt', 'authorId']) &&
-             data.title is string && data.title.size() > 0 && data.title.size() < 200 &&
-             data.videoIds is list && data.videoIds.size() <= 100 &&
-             data.createdAt is number &&
-             data.authorId == request.auth.uid &&
-             (!('thumbnailUrl' in data) || (data.thumbnailUrl is string && (data.thumbnailUrl.matches("^https://.*") || data.thumbnailUrl.matches("^http://.*")))) &&
-             (!('description' in data) || (data.description is string && data.description.size() < 1000));
+      return data.keys().hasAll(['id', 'title', 'videoIds', 'createdAt', 'authorId']) &&
+             data.id is string &&
+             data.title is string && data.title.size() < 200 &&
+             data.videoIds is list &&
+             data.authorId is string;
+    }
+
+    function isValidSettings(data) {
+      return data.keys().hasAll(['appName']) &&
+             data.appName is string && data.appName.size() < 100;
+    }
+
+    // ===============================================================
+    // Match Rules
+    // ===============================================================
+
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isValidUser(request.resource.data) && (isOwner(userId) || isAdmin());
+      allow update: if isAuthenticated() && isValidUser(request.resource.data) && (isOwner(userId) || isAdmin());
+      allow delete: if isAdmin();
     }
 
     match /videos/{videoId} {
       allow read: if isAuthenticated();
       allow create: if isAdmin() && isValidVideo(request.resource.data);
-      allow delete: if isAdmin();
       allow update: if isAdmin() && isValidVideo(request.resource.data);
+      allow delete: if isAdmin();
     }
 
     match /playlists/{playlistId} {
       allow read: if isAuthenticated();
       allow create: if isAdmin() && isValidPlaylist(request.resource.data);
-      allow delete: if isAdmin();
       allow update: if isAdmin() && isValidPlaylist(request.resource.data);
+      allow delete: if isAdmin();
+    }
+
+    match /settings/config {
+      allow read: if true;
+      allow write: if isAdmin() && isValidSettings(request.resource.data);
     }
   }
 }

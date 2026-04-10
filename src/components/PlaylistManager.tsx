@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
-import { db, auth, handleFirestoreError, OperationType } from '../firebase';
-import { collection, addDoc, query, where, onSnapshot, deleteDoc, doc, updateDoc } from 'firebase/firestore';
-import { X, Plus, PlaySquare, Trash2, List as ListIcon, Edit2, Save } from 'lucide-react';
+import { api } from '../api';
+import { useAuth } from '../context/AuthContext';
+import { X, Plus, PlaySquare, Trash2, List as ListIcon, Save } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Playlist, Video } from '../types';
 
@@ -12,6 +12,7 @@ interface PlaylistManagerProps {
 }
 
 export default function PlaylistManager({ onClose, videos, initialPlaylist }: PlaylistManagerProps) {
+  const { user } = useAuth();
   const [playlists, setPlaylists] = useState<Playlist[]>([]);
   const [isCreating, setIsCreating] = useState(false);
   const [editingPlaylist, setEditingPlaylist] = useState<Playlist | null>(null);
@@ -26,24 +27,24 @@ export default function PlaylistManager({ onClose, videos, initialPlaylist }: Pl
   }, [initialPlaylist]);
 
   useEffect(() => {
-    if (!auth.currentUser) {
-      setPlaylists([]);
-      return;
-    }
+    const fetchPlaylists = async () => {
+      if (!user) {
+        setPlaylists([]);
+        return;
+      }
 
-    const q = query(collection(db, 'playlists'), where('authorId', '==', auth.currentUser.uid));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const data = snapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data()
-      })) as Playlist[];
-      setPlaylists(data);
-    }, (error) => {
-      handleFirestoreError(error, OperationType.GET, 'playlists');
-    });
+      try {
+        const data = await api.getPlaylists();
+        // Filter playlists by authorId if needed, though the API might already do it or we might want to see all in admin
+        const userPlaylists = data.filter(p => p.authorId === user.uid);
+        setPlaylists(userPlaylists);
+      } catch (error) {
+        console.error('Error fetching playlists:', error);
+      }
+    };
 
-    return () => unsubscribe();
-  }, [auth.currentUser]);
+    fetchPlaylists();
+  }, [user]);
 
   const handleStartCreate = () => {
     setIsCreating(true);
@@ -65,29 +66,36 @@ export default function PlaylistManager({ onClose, videos, initialPlaylist }: Pl
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!auth.currentUser || !formData.title) return;
+    if (!user || !formData.title) return;
 
     setLoading(true);
     try {
       if (editingPlaylist) {
-        await updateDoc(doc(db, 'playlists', editingPlaylist.id), {
+        const updatedPlaylist = {
+          ...editingPlaylist,
           ...formData,
           videoIds: selectedVideoIds,
-        });
+        };
+        await api.updatePlaylist(editingPlaylist.id, updatedPlaylist);
+        setPlaylists(prev => prev.map(p => p.id === editingPlaylist.id ? updatedPlaylist : p));
+        window.dispatchEvent(new CustomEvent('playlist-updated'));
       } else {
-        await addDoc(collection(db, 'playlists'), {
+        const newPlaylist = await api.addPlaylist({
           ...formData,
           videoIds: selectedVideoIds,
           createdAt: Date.now(),
-          authorId: auth.currentUser.uid
+          authorId: user.uid
         });
+        setPlaylists(prev => [...prev, newPlaylist]);
+        window.dispatchEvent(new CustomEvent('playlist-updated'));
       }
       setFormData({ title: '', description: '', thumbnailUrl: '' });
       setSelectedVideoIds([]);
       setIsCreating(false);
       setEditingPlaylist(null);
     } catch (error) {
-      handleFirestoreError(error, OperationType.WRITE, 'playlists');
+      console.error('Error saving playlist:', error);
+      alert('Failed to save playlist');
     } finally {
       setLoading(false);
     }
@@ -96,12 +104,15 @@ export default function PlaylistManager({ onClose, videos, initialPlaylist }: Pl
   const handleDeletePlaylist = async (id: string) => {
     if (confirm('Are you sure you want to delete this playlist?')) {
       try {
-        await deleteDoc(doc(db, 'playlists', id));
+        await api.deletePlaylist(id);
+        setPlaylists(prev => prev.filter(p => p.id !== id));
+        window.dispatchEvent(new CustomEvent('playlist-updated'));
         if (editingPlaylist?.id === id) {
           setEditingPlaylist(null);
         }
       } catch (error) {
-        handleFirestoreError(error, OperationType.DELETE, `playlists/${id}`);
+        console.error('Error deleting playlist:', error);
+        alert('Failed to delete playlist');
       }
     }
   };
